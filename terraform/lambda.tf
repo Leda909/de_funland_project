@@ -51,7 +51,7 @@ resource "aws_lambda_function" "extract_lambda_handler" {
   timeout       = 900
   memory_size   = 3000
 
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = data.archive_file.extract_lambda.output_base64sha256
   layers = [aws_lambda_layer_version.lambda_layer.arn, "arn:aws:lambda:eu-west-2:336392948345:layer:AWSSDKPandas-Python312:17"]
   environment {
     variables = {
@@ -78,7 +78,7 @@ resource "aws_lambda_function" "transform_lambda_handler" {
   timeout       = 900
   memory_size   = 3000
 
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = data.archive_file.transform_lambda.output_base64sha256
   layers = [aws_lambda_layer_version.lambda_layer.arn, "arn:aws:lambda:eu-west-2:336392948345:layer:AWSSDKPandas-Python312:17"]
   environment {
     variables = {
@@ -106,7 +106,7 @@ resource "aws_lambda_function" "load_lambda_handler" {
   timeout       = 900
   memory_size   = 3000
   
-  source_code_hash = data.archive_file.lambda.output_base64sha256
+  source_code_hash = data.archive_file.load_lambda.output_base64sha256
   layers = [aws_lambda_layer_version.lambda_layer.arn, "arn:aws:lambda:eu-west-2:336392948345:layer:AWSSDKPandas-Python312:17"]
 
   environment {
