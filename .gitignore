@@ -1,3 +1,22 @@
+**/.vscode/
+**/*egg*
+**/*.pyc
+**/*_cache
+*coverage*
+**/.terraform*
+terraform/terraform.tfvars
+/dependencies/packages/*
+**/__pycache__/** */
+
+/deployment/handlers/extract/*
+/deployment/handlers/transform/*
+/deployment/handlers/load/*
+/deployment/layers/*
+# !/dependencies/layers/.gitkeep
+# !/dependencies/packages/.gitkeep
+# !/deployment/handlers/.gitkeep
+
+# ------------------ Template gitignore ---------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
