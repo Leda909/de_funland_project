@@ -132,7 +132,7 @@ that can read data in real-time from the warehouse. Examples of such application
 
 This aspect of the project should not be tackled until the final week of the course, more details will be given then. The major focus of your efforts should be to get the data into the data warehouse.
 
-![ETL Pipeline](assets/images/mvp.png)
+![ETL Pipeline](images/mvp.png)
 
 ## Technical Details
 
