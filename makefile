@@ -54,7 +54,7 @@ lint:
 
 # Run tests
 unit-test:
-	$(call execute_in_env, PYTHONPATH=$(PYTHONPATH) pytest --testdox -vvrP)
+	$(call execute_in_env, PYTHONPATH=$(PYTHONPATH) pytest test --testdox -vvrP)
 
 # Vulnerability check
 audit:
