@@ -37,14 +37,14 @@ jobs:
       run:
         make run-checks
 
-    - name: Generate HTML coverage report
-      run: make create-html-coverage-report
+    # - name: Generate HTML coverage report
+    #   run: make create-html-coverage-report
 
-    - name: Upload HTML coverage report
-      uses: actions/upload-artifact@v4
-      with:
-        name: coverage-report
-        path: htmlcov/
+    # - name: Upload HTML coverage report
+    #   uses: actions/upload-artifact@v4
+    #   with:
+    #     name: coverage-report
+    #     path: htmlcov/
 
 #   deploy-dev:
 #     # only runs if push or pull request happens to main branch
