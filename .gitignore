@@ -16,6 +16,8 @@ terraform/terraform.tfvars
 # !/dependencies/packages/.gitkeep
 # !/deployment/handlers/.gitkeep
 
+assets/REPORT.md
+
 # ------------------ Template gitignore ---------------------
 # Byte-compiled / optimized / DLL files
 __pycache__/

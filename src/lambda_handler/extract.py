@@ -30,7 +30,7 @@ def lambda_handler(event, context):
         - check, change, check to see of obtaining is dynamic?
         
     
-    - obtain db_creds via secret manager and store in a variable
+    - obtain totesys_db_creds via secret manager and store in a variable
         tests:
         - check the password is a string and the port is an int etc. 
     
@@ -155,11 +155,11 @@ def get_db_credentials(sm_client): # test and code complete
     
     Returns:
     dictionary of credentials
-    {"DB_USER":"totesys", DB_PASSWORD:".......}
+    {"TOTESYS_USER":"totesys", TOTESYS_PASSWORD:".......}
 
     """
     try:
-        response = sm_client.get_secret_value(SecretId = 'db_creds')
+        response = sm_client.get_secret_value(SecretId = 'totesys_db_creds')
         db_credentials = json.loads(response["SecretString"])
         return db_credentials
 
@@ -182,11 +182,11 @@ def create_db_connection(db_credentials): #test and code complete
     """
     try:
         return Connection(
-            user = db_credentials["DB_USER"],
-            password = db_credentials["DB_PASSWORD"],
-            database = db_credentials["DB_NAME"],
-            host = db_credentials["DB_HOST"],
-            port = db_credentials["DB_PORT"]
+            user = db_credentials["TOTESYS_USER"],
+            password = db_credentials["TOTESYS_PASSWORD"],
+            database = db_credentials["TOTESYS_DATABASE"],
+            host = db_credentials["TOTESYS_HOST"],
+            port = db_credentials["TOTESYS_PORT"]
         )
     except InterfaceError as interface_error:
         logger.error(f"create_db_connection: cannot connect to database: {interface_error}")
