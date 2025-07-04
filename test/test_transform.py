@@ -28,57 +28,54 @@ def aws_credentials():
     os.environ["AWS_SECURITY_TOKEN"] = "testing"
     os.environ["AWS_SESSION_TOKEN"] = "testing"
 
+
 @mock_aws
 class TestDimCurrency:
- 
-    def test_parquet_file_uploads_to_processed_bucket(self,s3_client):
+    def test_parquet_file_uploads_to_processed_bucket(self, s3_client):
 
         s3_client.create_bucket(
-        Bucket='ingestion-bucket-33-elisa-q',
-        CreateBucketConfiguration={
-        'LocationConstraint': 'eu-west-2',
-            },
+            Bucket='ingestion-bucket-33-elisa-q',
+            CreateBucketConfiguration={
+            'LocationConstraint': 'eu-west-2',
+                },
         )
         s3_client.create_bucket(
-        Bucket='processed-bucket-funlanf-e-l-3',
-        CreateBucketConfiguration={
-        'LocationConstraint': 'eu-west-2',
-            },
+            Bucket='processed-bucket-funlanf-e-l-3',
+            CreateBucketConfiguration={
+            'LocationConstraint': 'eu-west-2',
+                },
         )
            
-        #create a fake design csv file in ingestion bucket
+        #create a fake currency csv file in ingestion bucket and upload to s3 ingestion bucket
         last_checked = "2000-01-01 00:00:00.000000"
         
         columns= ['currency_id', 'currency_code', 'created_at', 'last_updated']
-        
-        new_rows = [
-            [0, 'GBP', datetime(2022, 11, 3, 14, 20, 51, 563000), datetime(2022, 11, 3, 14, 20, 51, 563000)]
-        ]
+        new_rows = [ [0, 'GBP', datetime(2022, 11, 3, 14, 20, 51, 563000), datetime(2022, 11, 3, 14, 20, 51, 563000)] ]
         
         df = pd.DataFrame(new_rows, columns = columns)
         wr.s3.to_csv(df, f"s3://ingestion-bucket-33-elisa-q/currency/{last_checked}.csv")
         
-        
-        ## run the function, which reads from the mocked ingestion bucket
+        # run the function, which reads from the mocked ingestion bucket
         # and transforms the data (drops two columns) and adds a new column(currency_name) and uploads to processed bucket
-        dim_currency(last_checked = last_checked, ingestion_bucket="ingestion-bucket-33-elisa-q", processed_bucket='processed-bucket-funlanf-e-l-3')
+        dim_currency(
+            last_checked = last_checked, 
+            ingestion_bucket="ingestion-bucket-33-elisa-q", 
+            processed_bucket='processed-bucket-funlanf-e-l-3'
+            )
         
         #read the file from processed bucket
-        
-        df_result = wr.s3.read_parquet(f"s3://processed-bucket-funlanf-e-l-3/currency/{last_checked}.parquet")
+        df_result = wr.s3.read_parquet(f"s3://processed-bucket-funlanf-e-l-3/dim_currency/{last_checked}.parquet")
+
         #create an expected dataframe to match up against our uploaded file
         dim_columns = ['currency_id', 'currency_code', 'currency_name']
-        dim_new_rows = [
-            [0, 'GBP', 'GBP_Name']
-        ]
+        dim_new_rows = [ [0, 'GBP', 'GBP_Name'] ]
         df_expected = pd.DataFrame(dim_new_rows, columns = dim_columns)
         
-        #df_expected.astype({'design_id': 'int64'}).dtypes
-        #assert that uploaded file matches our expected outlook
+        # Assertion
+        assert list(df_result.values[0]) == list(df_expected.values[0])
+        assert list(df_result.columns) == dim_columns
 
-        assert list(df_expected.values[0]) == list(df_result.values[0])
-    
-    
+       
 @mock_aws    
 class TestDimDesignFunction:
     def test_new_file_lands_in_processed_bucket(self, s3_client):
@@ -182,7 +179,6 @@ class TestDimStaffFunction:
         dim_staff(last_checked=file_marker, ingestion_bucket="ingestion-bucket-124-33", processed_bucket='processed-bucket-124-33')
         
         #read the file from processed bucket
-        
         df_result = wr.s3.read_parquet(f"s3://processed-bucket-124-33/dim_staff/1995-01-01 00:00:00.000000.parquet")
 
         #create an expected dataframe to match up against our uploaded file
