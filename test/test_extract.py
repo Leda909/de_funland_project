@@ -138,23 +138,6 @@ class TestDBConnection:
             create_db_connection(db_credentials)
 
 
-# @mock_aws
-# class TestGetDataFromDB:
-#     @pytest.mark.skip()
-#     def test_all_tables_exist(self, conn):
-#         tables_to_check = ["counterparty", "currency", 
-#                     "department", "design", "staff", "sales_order",
-#                     "address", "payment", "purchase_order", 
-#                     "payment_type", "transaction"]
-        
-        
-#         for table_name in tables_to_check:
-#             base_query = f"""SELECT EXISTS (SELECT FROM information_schema.tables \
-#                         WHERE table_name = '{table_name}')"""
-#             expect = conn.run(base_query)
-#             assert expect == [[True]]
-
-
 class TestGetBucketName:
     def test_get_bucket_name_gets_the_correct_bucket_name_which_is_dynamic(self):
         #assign

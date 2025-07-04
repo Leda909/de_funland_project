@@ -3,10 +3,8 @@ pg8000 # ==1.30.3
 pytest # ==7.4.3
 pytest-testdox
 boto3
-moto
+moto[all]
 awswrangler
-# psycopg2-binary
-# sqlalchemy
 pandas
 pytest-cov
 flake8
