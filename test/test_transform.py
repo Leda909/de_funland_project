@@ -387,7 +387,7 @@ class TestDimDateFunction:
 
         # act
         returned_dim_date_path = dim_date(file_marker, 'processed-bucket-333-33', start=test_start_date, end=test_end_date )
-        print(f"File path returned by dim_date: {returned_dim_date_path}")
+        # print(f"File path returned by dim_date: {returned_dim_date_path}")
 
         # ---- read the Date DFrame from the saved parquet file ------
         loaded_df = wr.s3.read_parquet(f"s3://processed-bucket-333-33/{returned_dim_date_path}")
@@ -428,7 +428,6 @@ class TestDimDateFunction:
         # assert first_row['day_name'] == 'Thursday'  
         # assert first_row['month_name'] == 'November'
         # assert first_row['quarter'] == 4
-
 
 
 @mock_aws
@@ -474,14 +473,15 @@ class TestFactSalesOrderFunction:
         df_result = wr.s3.read_parquet(f"s3://processed-bucket-124-33/fact_sales_order/1995-01-01 00:00:00.000000.parquet")
         
         fact_sales_order_columns=[
-        'sales_record_id', 'sales_order_id',
-        'created_date','created_time', 
-        'last_updated_date', 'last_updated_time',
-        'sales_staff_id','counterparty_id',
-        'units_sold', 'unit_price',
-        'currency_id', 'design_id',
-        'agreed_payment_date', 'agreed_delivery_date', # check 
-        'agreed_delivery_location_id']
+            'sales_record_id', 'sales_order_id',
+            'created_date','created_time', 
+            'last_updated_date', 'last_updated_time',
+            'sales_staff_id','counterparty_id',
+            'units_sold', 'unit_price',
+            'currency_id', 'design_id',
+            'agreed_payment_date', 'agreed_delivery_date', # check 
+            'agreed_delivery_location_id'
+            ]
         
         fact_sales_order_new_rows= [
         [2, 2,

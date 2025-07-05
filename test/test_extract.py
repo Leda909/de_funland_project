@@ -1,18 +1,16 @@
 from src.lambda_handler.extract import get_db_credentials, get_last_checked, create_db_connection, update_last_checked, extract_new_rows, convert_new_rows_to_df_and_upload_to_s3_as_csv, get_bucket_name
 import pytest
-from pg8000.native import DatabaseError, InterfaceError, Connection
+from pg8000.native import InterfaceError, Connection
 from moto import mock_aws
+from unittest.mock import patch, MagicMock
 import boto3
 from botocore.config import Config
 from datetime import datetime
 import json
 import os
-from botocore.exceptions import ClientError
-import os
 from dotenv import load_dotenv
 import awswrangler as wr
 import pandas as pd
-from awswrangler import exceptions
 
 
 @pytest.fixture(scope="module")
@@ -39,17 +37,17 @@ def sm_client():
         )
     return boto3.client('secretsmanager', config = my_config)
 
-@pytest.fixture(scope='function')
-def db_conn():
-    load_dotenv()
-    conn = Connection(
-        user = os.getenv("totesys_user"),
-        password = os.getenv("totesys_password"),
-        database = os.getenv("totesys_database"),
-        host = os.getenv("totesys_host"),
-        port = os.getenv("totesys_port")
-    )
-    return conn
+# @pytest.fixture(scope='function')
+# def db_conn():
+#     load_dotenv()
+#     conn = Connection(
+#         user = os.getenv("totesys_user"),
+#         password = os.getenv("totesys_password"),
+#         database = os.getenv("totesys_database"),
+#         host = os.getenv("totesys_host"),
+#         port = os.getenv("totesys_port")
+#     )
+#     return conn
 
 @pytest.fixture(scope='function')
 def s3_client():
@@ -92,7 +90,7 @@ class TestGetDBCredentials():
         secret_string = json.dumps(secret_dict)
                 
         sm_client.create_secret(
-            Name = "db_creds",
+            Name = "totesys_db_creds",
             SecretString = secret_string
             )
         
@@ -111,29 +109,49 @@ class TestGetDBCredentials():
 # Test for db_connection
 class TestDBConnection:
     def test_create_db_connection_creates_a_connection(self, sm_client):
-        #assign
+        # arrange
+        sm_client = MagicMock()
+        secret_dict = {
+            "TOTESYS_USER": "test_user",
+            "TOTESYS_PASSWORD": "test_password",
+            "TOTESYS_DATABASE": "test_db",
+            "TOTESYS_HOST": "localhost",
+            "TOTESYS_PORT": 5432
+        }
+        sm_client.get_secret_value.return_value = {
+            "SecretString": json.dumps(secret_dict)
+        }
         db_credentials = get_db_credentials(sm_client)
 
-        #action
-        result = create_db_connection(db_credentials)
+        with patch("src.lambda_handler.extract.Connection") as mock_connection:
+            mock_connection.return_value = "mocked_connection_object"
 
-        #assert
-        assert result
+            # act
+            result = create_db_connection(db_credentials)
+
+            # assert
+            mock_connection.assert_called_once_with(
+                user="test_user",
+                password="test_password",
+                database="test_db",
+                host="localhost",
+                port=5432
+            )
+            assert result == "mocked_connection_object"
+
 
 
     def test_create_db_connection_raise_error_when_wrong_credentials_supplied(self, sm_client):
-        #assign
+        # arrange
         db_credentials = {
-            "DB_USER": "Funland",
-            "DB_PASSWORD": "Fun_password",
-            "DB_NAME": "Fun_name",
-            "DB_HOST": "Fun_NC",
-            "DB_PORT": 5432
+            "TOTESYS_USER": "wrong_user",
+            "TOTESYS_PASSWORD": "wrong_password",
+            "TOTESYS_DATABASE": "wrong_db",
+            "TOTESYS_HOST": "wrong_host",
+            "TOTESYS_PORT": 5432
         }
 
-        #action
-
-        #assert
+        # assert
         with pytest.raises(InterfaceError):
             create_db_connection(db_credentials)
 

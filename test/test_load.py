@@ -10,6 +10,7 @@ from unittest.mock import patch, MagicMock
 from botocore.exceptions import ClientError
 from moto import mock_aws
 from datetime import date, time
+from dotenv import load_dotenv
 
 
 # ----------
@@ -249,6 +250,34 @@ class TestGetWarehouseCredentials:
         with pytest.raises(ClientError, match="Access denied"):
             get_w_creds(sm_client)
 
+    def test_db_credentials_match_env(self, sm_client):
+        """
+        Test that asserts the DB credentials returned by get_w_creds 
+        match those defined in the .env file.
+        """
+        load_dotenv()
+
+        # prepare expected credentials from .env
+        expected_creds = {
+            "WAREHOUSE_USER": os.getenv("warehouse_user"),
+            "WAREHOUSE_PASSWORD": os.getenv("warehouse_password"),
+            "WAREHOUSE_HOST": os.getenv("warehouse_host"),
+            "WAREHOUSE_PORT": os.getenv("warehouse_port"),
+            "WAREHOUSE_DATABASE": os.getenv("warehouse_database")
+        }
+
+        # create secret in mock Secrets Manager with same credentials
+        sm_client.create_secret(
+            Name="warehouse_secrets",
+            SecretString=json.dumps(expected_creds)
+        )
+
+        # fetch credentials using get_w_creds
+        returned_creds = get_w_creds(sm_client)
+
+        # assert returned credentials match expected
+        assert returned_creds == expected_creds
+
 
 #-------------- Test Create DB Connection ---------------
             
@@ -303,7 +332,7 @@ class TestCreateDbConnection:
         }
         
         with patch('src.lambda_handler.load.Connection') as mock_conn:
-            # make the Connection constructor raise an InterfaceError
+            # make the Connection raise an InterfaceError
             mock_conn.side_effect = InterfaceError("Connection failed")
             
             with pytest.raises(InterfaceError, match="Connection failed"):
