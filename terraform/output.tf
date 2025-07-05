@@ -1,3 +1,9 @@
+# To confirm wheter "last_checked" parameter already exist.
+output "check_last_checked_parameter" {
+  value = aws_ssm_parameter.last_checked_parameter.name
+  description = "last_checked parameter aready exist with this name."
+}
+
 #-------------------------------------------------------------------------------
 # To see in the console that terrafom deployment will pick up secret elements from the terraform.tfvars use output.
 #-------------------------------------------------------------------------------
