@@ -120,7 +120,7 @@ def lambda_handler(event, context):
 # Useful functions for the Lambda Handler
 ##################################################################################
     
-def get_last_checked(ssm_client): # test and code complete
+def get_last_checked(ssm_client):
     """
     Summary:
     Access the aws parameter store, and obtain the last_checked parameter.
@@ -141,14 +141,14 @@ def get_last_checked(ssm_client): # test and code complete
 
     except ssm_client.exceptions.ParameterNotFound as par_not_found_error:
         logger.error(f"get_last_checked: The parameter was not found: {str(par_not_found_error)}")
-        raise par_not_found_error
+        raise
     except ClientError as error:
         logger.error(f"get_last_checked: There has been an error: {str(error)}")
-        raise error
+        raise
     
     
    
-def get_db_credentials(sm_client): # test and code complete
+def get_db_credentials(sm_client): 
     """_summary_
     This functions should return a dictionary of all 
     the db credentials obtained from secret manager
@@ -171,7 +171,7 @@ def get_db_credentials(sm_client): # test and code complete
         raise error
 
 
-def create_db_connection(db_credentials): #test and code complete
+def create_db_connection(db_credentials):
     """ Summary:
     Connect to the totesys database using credentials fetched from 
     AWS Parameter Store (a separate function employed for this purpose).
@@ -222,30 +222,34 @@ def extract_new_rows(table_name, last_checked, db_connection):
         
         returns a tuple of (column_names, new_rows):
     """
+    try:
+        last_checked_dt_obj = datetime.strptime(last_checked, "%Y-%m-%d %H:%M:%S.%f")
     
-    last_checked_dt_obj = datetime.strptime(last_checked, "%Y-%m-%d %H:%M:%S.%f")
+    except ValueError as e:
+        logger.error(f"Invalid last_checked format: {last_checked}")
+        raise {str(e)}
 
     if table_name in ["department"]:
         query = f"""
-    SELECT * FROM {identifier(table_name)}
-    """
+            SELECT * FROM {identifier(table_name)}
+        """
     else:
         query = f"""
-    SELECT * FROM {identifier(table_name)} WHERE last_updated > {literal(last_checked_dt_obj)}
-    """
+            SELECT * FROM {identifier(table_name)} WHERE last_updated > {literal(last_checked_dt_obj)}
+        """
            
     try:
         new_rows = db_connection.run(query)
         column_names = [column['name'] for column in db_connection.columns]
         return column_names, new_rows
     except DatabaseError as db_error:
-        logger.error(f"There has been a database error: {str(db_error)}")
+        logger.error(f"extract_new_rows: database error while querying {table_name}: {str(db_error)}")
+        raise db_error
     except Exception as error:
-        logger.error(f"There has been an error: {str(error)}")
+        logger.error(f"extract_new_rows: unexpected error: {str(error)}")
+        raise error
 
     
-
-
 def convert_new_rows_to_df_and_upload_to_s3_as_csv(ingestion_bucket, table, column_names, new_rows,last_checked):
     """
     Summary:
@@ -268,11 +272,12 @@ def convert_new_rows_to_df_and_upload_to_s3_as_csv(ingestion_bucket, table, colu
     
     #convert new rows to a dataframe
     df = pd.DataFrame(new_rows,columns=column_names)
-    logger.info(f"dataframe for {table} has been created")
+    logger.info(f"dataframe for {table} has been created with {len(df)} rows.")
     #convert dataframe to a csv file
     try:
         wr.s3.to_csv(df, f"s3://{ingestion_bucket}/{table}/{last_checked}.csv")
         logger.info(f"{table} has been saved to s3://{ingestion_bucket}/{table}/{last_checked}.csv")
+
     except Exception as error:
         logger.error(f"convert_new_rows_to_df_and_upload_to_s3_as_csv: There has been a dataframe error: {str(error)}")
         raise error
@@ -303,21 +308,21 @@ def update_last_checked(ssm_client):
         logger.error(f"There has been an error: {str(e)}")
         raise e
     
-
-
-    
-def get_bucket_name(): #completed with tests
+   
+def get_bucket_name():
     """
     Summary : this function should obtain the ingestion bucket name from the
     environment variables and return it.
-    
-    
+        
     Returns:
     dict {"ingestion_bucket" : "funland-ingestion-bucket-......."}
-    
     """
 
     bucket_name = os.environ.get("S3_INGESTION_BUCKET")
+    if not bucket_name:
+        logger.error("get_bucket_name: S3_INGESTION_BUCKET environment variable is not set.")
+        raise EnvironmentError("S3_INGESTION_BUCKET env variable is not defined.")
+    
     return {"ingestion_bucket":f'{bucket_name}'}
 
     

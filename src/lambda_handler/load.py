@@ -41,12 +41,16 @@ def lambda_handler(event, context):
 
     tables = [
         "fact_sales_order",
+        "fact_purchase_order",
+        "fact_payment",
         "dim_currency", 
         "dim_location",
         "dim_design",
         "dim_staff",
         "dim_counterparty", 
-        "dim_date"
+        "dim_date",
+        "dim_transaction",
+        "dim_payment_type"
     ]
 
     # Get credentials and create db connection
@@ -85,6 +89,7 @@ def lambda_handler(event, context):
 
         except Exception as e:
             logger.error(f"Error occured for processing table: {table}: {str(e)}.")
+            raise {str(e)}
 
     # Return status and how many tables were loaded
     return {
@@ -138,7 +143,7 @@ def create_db_connection(w_creds):
         logger.error(f"create_db_connection: cannot connect to database: {interface_error}")
         raise interface_error
     except Exception as error:
-        logger.error(f"create_db_connection: there has been an error: {error}")
+        logger.error(f"create_db_connection: there has been an error: {str(error)}")
         raise error
     
 

@@ -17,7 +17,6 @@ terraform/terraform.tfvars
 # !/deployment/handlers/.gitkeep
 
 assets/REPORT.md
-assets/PLAN.md
 
 # ------------------ Template gitignore ---------------------
 # Byte-compiled / optimized / DLL files

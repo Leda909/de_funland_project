@@ -1,6 +1,6 @@
 from src.lambda_handler.transform import (dim_design, check_file_exists_in_ingestion_bucket, dim_currency,
-                                          check_file_exists_in_ingestion_bucket, dim_staff, dim_counterparty,
-                                          dim_location, fact_sales_order, dim_date)
+                                          dim_staff, dim_counterparty, dim_location, dim_date, dim_transaction,
+                                          dim_payment_type, fact_sales_order, fact_purchase_order, fact_payment)
 import pytest
 import boto3
 import awswrangler as wr
@@ -10,9 +10,7 @@ from moto import mock_aws
 import os
 import numpy as np
 from pandas.testing import assert_series_equal
-
-
-
+from decimal import Decimal
 
 @pytest.fixture(scope='function')
 def s3_client():
@@ -35,15 +33,11 @@ class TestDimCurrency:
 
         s3_client.create_bucket(
             Bucket='ingestion-bucket-33-elisa-q',
-            CreateBucketConfiguration={
-            'LocationConstraint': 'eu-west-2',
-                },
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
         )
         s3_client.create_bucket(
             Bucket='processed-bucket-funlanf-e-l-3',
-            CreateBucketConfiguration={
-            'LocationConstraint': 'eu-west-2',
-                },
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
         )
            
         #create a fake currency csv file in ingestion bucket and upload to s3 ingestion bucket
@@ -96,9 +90,8 @@ class TestDimDesignFunction:
          
         #create a fake design csv file in ingestion bucket
         file_marker = "1995-01-01 00:00:00.000000"
-        columns = ['design_id', 'created_at', 
-                'last_updated', 'design_name', 
-                'file_location', 'file_name']
+
+        columns = ['design_id', 'created_at', 'last_updated', 'design_name', 'file_location', 'file_name']
         
         new_rows = [
             [0,datetime(2022, 11, 3, 14, 20, 49, 962000), datetime(2022, 11, 3, 14, 20, 49, 962000),'Wooden', '/usr', 'wooden-20220717-npgz.json' ]
@@ -113,11 +106,9 @@ class TestDimDesignFunction:
         dim_design(last_checked=file_marker, ingestion_bucket="ingestion-bucket-124-33", processed_bucket='processed-bucket-124-33')
         
         #read the file from processed bucket
-        
         df_result = wr.s3.read_parquet(f"s3://processed-bucket-124-33/dim_design/1995-01-01 00:00:00.000000.parquet")
         #create an expected dataframe to match up against our uploaded file
-        dim_columns = ['design_id', 'design_name', 
-                'file_location', 'file_name']
+        dim_columns = ['design_id', 'design_name', 'file_location', 'file_name']
         dim_new_rows = [
             [0, 'Wooden', '/usr', 'wooden-20220717-npgz.json' ]
         ]
@@ -292,14 +283,10 @@ class TestDimLocationFunction:
             if col != "location_id":
                 df_result[col] = df_result[col].astype(str)
 
-
         # df_result = df_result.astype(str)
-        dim_location_columns = ["location_id", "address_line_1","address_line_2", "district",
-                       "city", "postal_code", "country", "phone"]
-        
+        dim_location_columns = ["location_id", "address_line_1","address_line_2", "district", "city", "postal_code", "country", "phone"]
         dim_location_new_rows = [[2, '179 Alexie Cliffs', np.nan, np.nan, 'Aliso Viejo', '99305-7380', 'San Marino', '9621 880720']]
-        # df_result = df_result.astype(str)
-
+    
         df_expected = pd.DataFrame(dim_location_new_rows, columns = dim_location_columns)
         # df_expected = df_expected.astype(str)
         df_expected["location_id"] = df_expected["location_id"].astype(int)
@@ -338,7 +325,7 @@ class TestDimCounterpartyFunction:
         
         address_columns=['address_id', 'address_line_1', 'address_line_2', 'city', 'country', 'created_at', 'district', 'last_updated', 'phone', 'postal_code'  ]
         new_rows_address=[[15, '605 Haskell Trafficway', 'Axel Freeway', 'East Bobbie', 'Heard Island and McDonald Islands', datetime(2022, 11, 3, 14, 20, 49, 962000), None, datetime(2022, 11, 3, 14, 20, 49, 962000), '9687 937447', '88253-4257']]
-        df_address=pd.DataFrame(new_rows_address,columns=address_columns)
+        df_address=pd.DataFrame(new_rows_address, columns=address_columns)
         wr.s3.to_csv(df_address, f"s3://ingestion-bucket-124-33/address/{file_marker}.csv")
         
         dim_counterparty(file_marker, "ingestion-bucket-124-33", 'processed-bucket-124-33', s3_client)
@@ -348,15 +335,15 @@ class TestDimCounterpartyFunction:
         df_result = df_result.replace(np.nan, None)
         
         dim_counterparty_columns=[
-        'counterparty_id', 
-        'counterparty_legal_name', 
-        'counterparty_legal_address_line_1', 
-        'counterparty_legal_address_line_2',
-        'counterparty_legal_district',
-        'counterparty_legal_city', 
-        'counterparty_legal_postal_code', 
-        'counterparty_legal_country', 
-        'counterparty_legal_phone_number' 
+            'counterparty_id', 
+            'counterparty_legal_name', 
+            'counterparty_legal_address_line_1', 
+            'counterparty_legal_address_line_2',
+            'counterparty_legal_district',
+            'counterparty_legal_city', 
+            'counterparty_legal_postal_code', 
+            'counterparty_legal_country', 
+            'counterparty_legal_phone_number' 
         ]
   
         dim_counterparty_new_rows=[[1, 'Fahey and Sons', 
@@ -429,40 +416,108 @@ class TestDimDateFunction:
         # assert first_row['month_name'] == 'November'
         # assert first_row['quarter'] == 4
 
+@mock_aws
+class TestDimTransaction:
+    def test_dim_transaction_function(self, s3_client):
+        # make mocked bucket, ingestion and processed
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-222-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-222-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+
+        file_marker = "1995-01-01 00:00:00.000000"
+
+        transaction_columns = [ 'created_at', 'last_updated', 'purchase_order_id', 'sales_order_id', 'transaction_id', 'transaction_type' ]
+        new_row_transaction = [[ datetime(2022, 11, 3, 14, 20, 52, 186000), datetime(2022, 11, 3, 14, 20, 52, 186000), 2, None, 1, 'PURCHASE' ]]
+
+        df = pd.DataFrame(new_row_transaction, columns=transaction_columns)
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-222-33/transaction/{file_marker}.csv")
+
+        # run the function, which reads the mocked bucket(s)
+        dim_transaction(last_checked=file_marker, ingestion_bucket='ingestion-bucket-222-33', processed_bucket='processed-bucket-222-33')
+
+        # read the file from processed bucket
+        df_result = wr.s3.read_parquet(f"s3://processed-bucket-222-33/dim_transaction/1995-01-01 00:00:00.000000.parquet")
+        df_result = df_result.replace(np.nan, None)
+
+        # create an expected dataframe to match up against our uploaded file
+        dim_columns = [ 'transaction_id', 'transaction_type', 'sales_order_id', 'purchase_order_id' ] 
+        dim_new_rows = [[ 1, 'PURCHASE', None, 2 ]]  
+        df_expected = pd.DataFrame(dim_new_rows, columns = dim_columns)
+
+        # assert that uploaded file matches our expected outlook
+        assert list(df_result.values[0]) == list(df_expected.values[0])
+        # assert set(df_result.columns) == set(df_expected.columns)
+
+@mock_aws
+class TestDimPaymentType:
+    def test_dim_payment_type_function(self, s3_client):
+        # make mocked bucket, ingestion and processed
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-444-44',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-444-44',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+
+        file_marker = "1995-01-01 00:00:00.000000"
+
+        payment_type_columns = ['created_at', 'last_updated', 'payment_type_id', 'payment_type_name']
+
+        new_row_payment_type = [[
+            datetime(2022, 11, 3, 14, 20, 49, 962000),
+            datetime(2022, 11, 3, 14, 20, 49, 962000),
+            1, 'SALES_RECEIPT'
+        ]]
+
+        df = pd.DataFrame(new_row_payment_type, columns = payment_type_columns)
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-444-44/payment_type/{file_marker}.csv")
+
+        # run the function, which reads the mocked bucket(s)
+        dim_payment_type(last_checked=file_marker, ingestion_bucket='ingestion-bucket-444-44', processed_bucket='processed-bucket-444-44')
+
+        #read the file from processed bucket
+        df_result = wr.s3.read_parquet(f"s3://processed-bucket-444-44/dim_payment_type/1995-01-01 00:00:00.000000.parquet")
+
+        # create an expected dataframe to match up against our uploaded file
+        dim_columns = ['payment_type_id', 'payment_type_name']
+        dim_new_rows = [[ 1, 'SALES_RECEIPT' ]]
+        df_expected = pd.DataFrame(dim_new_rows, columns = dim_columns)
+
+        #assert that uploaded file matches our expected outlook
+        assert list(df_result.values[0]) == list(df_expected.values[0])
+        # assert set(df_result.columns) == set(df_expected.columns)
 
 @mock_aws
 class TestFactSalesOrderFunction:
     def test_fact_sales_order_function(self, s3_client):
-        #make mocked bucket, ingestion and processed
+        # make mocked bucket, ingestion and processed
         s3_client.create_bucket(
-        Bucket='ingestion-bucket-124-33',
-        CreateBucketConfiguration={
-        'LocationConstraint': 'eu-west-2',
-            },
+            Bucket='ingestion-bucket-124-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
         )
         s3_client.create_bucket(
-        Bucket='processed-bucket-124-33',
-        CreateBucketConfiguration={
-        'LocationConstraint': 'eu-west-2',
-            },
+            Bucket='processed-bucket-124-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
         )
 
         file_marker = "1995-01-01 00:00:00.000000"
 
         sales_order_columns=['sales_order_id', 'created_at',
-        'last_updated', 'design_id',
-         'staff_id','counterparty_id',
-         'units_sold', 'unit_price',
-        'currency_id', 'agreed_delivery_date',
+        'last_updated', 'design_id', 'staff_id','counterparty_id',
+        'units_sold', 'unit_price', 'currency_id', 'agreed_delivery_date',
         'agreed_payment_date','agreed_delivery_location_id']
 
-        new_rows_sales_order=[
-            [2,datetime(2022, 11, 3, 14, 20, 52, 186000),
+        new_rows_sales_order=[[
+            2, datetime(2022, 11, 3, 14, 20, 52, 186000),
             datetime(2022, 11, 3, 14, 20, 52, 186000), 3,
-            19, 8, 
-            42972,3.94,
-            2, '2022-11-07',
-            '2022-11-08', 8]
+            19, 8, 42972,3.94, 2, '2022-11-07', '2022-11-08', 8]
         ]
 
         df_sales=pd.DataFrame(new_rows_sales_order, columns=sales_order_columns)
@@ -473,42 +528,159 @@ class TestFactSalesOrderFunction:
         df_result = wr.s3.read_parquet(f"s3://processed-bucket-124-33/fact_sales_order/1995-01-01 00:00:00.000000.parquet")
         
         fact_sales_order_columns=[
-            'sales_record_id', 'sales_order_id',
+            'sales_order_id',
             'created_date','created_time', 
             'last_updated_date', 'last_updated_time',
             'sales_staff_id','counterparty_id',
             'units_sold', 'unit_price',
             'currency_id', 'design_id',
-            'agreed_payment_date', 'agreed_delivery_date', # check 
+            'agreed_payment_date', 'agreed_delivery_date',
             'agreed_delivery_location_id'
             ]
         
-        fact_sales_order_new_rows= [
-        [2, 2,
-        date(2022,11,3), time(14, 20, 52, 186000), 
-        date(2022,11,3), time(14, 20, 52, 186000), 
-        19, 8,
-        42972, 3.94,
-        2, 3,
-        date(2022,11,8),date(2022,11,7),
-        8]]
+        fact_sales_order_new_rows= [[ 
+            2, date(2022,11,3), time(14, 20, 52, 186000), date(2022,11,3), time(14, 20, 52, 186000), 
+            19, 8, 42972, 3.94, 2, 3, date(2022,11,8),date(2022,11,7), 8
+            ]]
          
-        ####look at testing
-
+        # look at testing
         df_expected=pd.DataFrame(fact_sales_order_new_rows, columns= fact_sales_order_columns)
         
-        print(df_result.columns.values)
-        print(df_expected.columns.values)
+        # print(df_result.columns.values)
+        # print(df_expected.columns.values)
 
         assert list(df_result.values[0]) == list(df_expected.values[0])
         assert list(df_result.columns.values) == list(df_expected.columns.values)
-       
-       
-       
-       
-       
 
+@mock_aws
+class TestFactPurchaseOrderFunction:
+    def test_fact_purchase_order_function(self, s3_client):
+        # make mocked bucket, ingestion and processed
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-232-66',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-232-66',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
 
+        file_marker = "1995-01-01 00:00:00.000000"
+
+        purchase_order_columns = [
+            'agreed_delivery_date', 
+            'agreed_delivery_location_id', 
+            'agreed_payment_date',
+            'counterparty_id', 
+            'created_at',
+            'currency_id', 
+            'item_code', 
+            'item_quantity',
+            'item_unit_price', 
+            'last_updated', 
+            'purchase_order_id', 
+            'staff_id'
+            ]
+
+        new_row_purchase_order = [[ '2022-11-09', 6, '2022-11-07', 11, datetime(2022, 11, 3, 14, 20, 52, 187000), 
+                                   2, 'ZDOI5EA', 371, Decimal('361.39'), datetime(2022, 11, 3, 14, 20, 52, 187000), 1, 12 ]]
+
+        df = pd.DataFrame(new_row_purchase_order, columns = purchase_order_columns)
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-232-66/purchase_order/{file_marker}.csv")
+
+        # run the function, which reads the mocked bucket(s)
+        fact_purchase_order(last_checked=file_marker, ingestion_bucket='ingestion-bucket-232-66', processed_bucket='processed-bucket-232-66')
+
+        #read the file from processed bucket
+        df_result = wr.s3.read_parquet(f"s3://processed-bucket-232-66/fact_purchase_order/1995-01-01 00:00:00.000000.parquet")
+
+        # create an expected dataframe to match up against our uploaded file
+        fact_purchase_order_columns = [
+            'purchase_order_id', 
+            'created_date', 
+            'created_time',
+            'last_updated_date', 
+            'last_updated_time',
+            'staff_id', 
+            'counterparty_id',
+            'item_code', 
+            'item_quantity', 
+            'item_unit_price',
+            'currency_id', 
+            'agreed_delivery_date',
+            'agreed_payment_date', 
+            'agreed_delivery_location_id'
+        ]
+        fact_purchase_order_new_rows = [[ 1, date(2022,11,3), time(14, 20, 52, 187000), date(2022,11,3), time(14, 20, 52, 187000), 
+                                         12, 11, 'ZDOI5EA', 371, 361.39, 2, date(2022,11,9), date(2022,11,7), 6 ]]
+
+        df_expected = pd.DataFrame(fact_purchase_order_new_rows, columns = fact_purchase_order_columns)
+
+        #assert that uploaded file matches our expected outlook
+        assert list(df_result.values[0]) == list(df_expected.values[0])
+
+@mock_aws
+class TestFactPaymentFunction:
+    def test_fact_payment_function(self, s3_client): 
+        # make mocked bucket, ingestion and processed
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-999-88',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-999-88',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+
+        file_marker = "1995-01-01 00:00:00.000000"
+
+        payment_columns = [
+            'company_ac_number',
+            'counterparty_ac_number',
+            'counterparty_id',
+            'created_at',
+            'currency_id',
+            'last_updated',
+            'paid',
+            'payment_amount',
+            'payment_date',
+            'payment_id',
+            'payment_type_id',
+            'transaction_id' ]
+
+        new_row_payment = [[ 67305075, 31622269, 15, datetime(2022, 11, 3, 14, 20, 52, 187000), 2, 
+            datetime(2022, 11, 3, 14, 20, 52, 187000), False, Decimal('552548.62'), '2022-11-04', 2, 3, 2 ]]
+
+        df = pd.DataFrame(new_row_payment, columns = payment_columns)
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-999-88/payment/{file_marker}.csv")
+
+        # run the function, which reads the mocked bucket(s)
+        fact_payment(last_checked=file_marker, ingestion_bucket='ingestion-bucket-999-88', processed_bucket='processed-bucket-999-88')
+
+        #read the file from processed bucket
+        df_result = wr.s3.read_parquet(f"s3://processed-bucket-999-88/fact_payment/1995-01-01 00:00:00.000000.parquet")
+
+        # create an expected dataframe to match up against our uploaded file
+        dim_columns = [
+            "payment_id", 
+            "created_date",
+            "created_time",
+            "last_updated_date",
+            "last_updated_time",
+            "transaction_id",
+            "counterparty_id",
+            "payment_amount",
+            "currency_id",
+            "payment_type_id",
+            "paid",
+            "payment_date"
+            ]
+        dim_new_rows = [[ 2, date(2022,11,3), time(14,20,52,187000), date(2022,11,3), time(14,20,52,187000), 
+                         2, 15, 552548.62, 2, 3, False, date(2022,11,4) ]]
+        df_expected = pd.DataFrame(dim_new_rows, columns = dim_columns)
+
+        #assert that uploaded file matches our expected outlook
+        assert list(df_result.values[0]) == list(df_expected.values[0])
 
 @mock_aws          
 class TestCheckFileExistsInBucket: 
@@ -518,23 +690,16 @@ class TestCheckFileExistsInBucket:
     def test_logs_error_if_no_file_ingested(self, s3_client): 
         #mock bucket 
         s3_client.create_bucket(
-        Bucket='ingestion-bucket-124-33',
-        CreateBucketConfiguration={
-        'LocationConstraint': 'eu-west-2',
-            },
+            Bucket='ingestion-bucket-124-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
         )
 
         #create a fake design csv file in ingestion bucket
         file_marker = "1995-01-01 00:00:00.000000"
-        columns = ['design_id', 'created_at', 
-                'last_updated', 'design_name', 
-                'file_location', 'file_name']
-        
-        new_rows = [
-            [0,datetime(2022, 11, 3, 14, 20, 49, 962000), datetime(2022, 11, 3, 14, 20, 49, 962000),'Wooden', '/usr', 'wooden-20220717-npgz.json' ]
-        ]
+        columns = ['design_id', 'created_at', 'last_updated', 'design_name', 'file_location', 'file_name']
+        new_rows = [[ 0,datetime(2022, 11, 3, 14, 20, 49, 962000), datetime(2022, 11, 3, 14, 20, 49, 962000),'Wooden', '/usr', 'wooden-20220717-npgz.json' ]]
         
         df = pd.DataFrame(new_rows, columns = columns)
-        #file not added to s3 bucket 
 
+        #file not added to s3 bucket 
         assert check_file_exists_in_ingestion_bucket(bucket='ingestion-bucket-124-33', filename=f"design/{file_marker}.csv") == False

@@ -1,14 +1,12 @@
 import logging
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
 from datetime import datetime, timezone
 import pandas as pd
 import awswrangler as wr
 import botocore.exceptions
 import json
 import os
-
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -41,12 +39,15 @@ def lambda_handler(event, context):
     
     # Apply transformations for each table
     fact_sales_order(last_checked, ingestion_bucket, processed_bucket)
+    fact_purchase_order(last_checked, ingestion_bucket, processed_bucket)
+    fact_payment(last_checked, ingestion_bucket, processed_bucket)
     dim_currency(last_checked, ingestion_bucket, processed_bucket)
     dim_location(last_checked, ingestion_bucket, processed_bucket)
     dim_design(last_checked, ingestion_bucket, processed_bucket)
     dim_staff(last_checked, ingestion_bucket, processed_bucket)
     dim_counterparty(last_checked, ingestion_bucket, processed_bucket, s3_client)
-    
+    dim_transaction(last_checked, ingestion_bucket, processed_bucket)
+    dim_payment_type(last_checked, ingestion_bucket, processed_bucket)
     
     # Only create dim_date if run within a certain window
     if datetime.now() < datetime(2025, 6, 11, 10, 50, 00): # manually alter this so the time on the right is 10 mins after current time
@@ -58,18 +59,38 @@ def lambda_handler(event, context):
         "timestamp_to_transform": last_checked,
         "message": "Transformation complete. Files are in the processed S3 bucket."
         }    
-    
+
+def check_file_exists_in_ingestion_bucket(bucket, filename):
+    """
+    Summary:
+    This function accesses the AWS S3 ingestion bucket and check if a specific file exists.
+    If it doesn't exist, it returns 'File' does not exist, and logs the error.
+
+    Args:
+    bucket, file_name
+
+    Returns:
+        Boolean.
+    """
+    s3_client = boto3.client("s3")
+    try:
+        s3_client.head_object(Bucket=bucket, Key=filename)
+        logger.info(f"Key: '{filename}' found!")
+        return True
+    except s3_client.exceptions.NoSuchBucket as NoSuchBucket: 
+        logger.info(f"Bucket: '{bucket}' does not exist!")
+        return False
+    except botocore.exceptions.ClientError as ClientError:
+        if ClientError.response["Error"]["Code"] == "404":
+            logger.info(f"Key: '{filename}' does not exist!")
+            return False
+
 
 def dim_currency(last_checked,ingestion_bucket,processed_bucket):
-
     """
     We will read the csv file for the currency table from the s3 ingestion bucket using awswrangler.
-    
     Compare the column names in the currency table and dim_currency table.
-
     We will make a dataframe using pandas for this table with the needed columns. 
-    
-
     Convert it to parquet file and then upload it to the processed bucket.
 
     ARGS:ingestion_bucket,last_checked, processed_bucket
@@ -84,15 +105,12 @@ def dim_currency(last_checked,ingestion_bucket,processed_bucket):
     #reading the csv file
     df_currency = wr.s3.read_csv(f"s3://{ingestion_bucket}/currency/{last_checked}.csv")
     
-    #columns_currency=[currency_id, currency_code, created_at, last_updated]
-    #columns_dim_currency=[currency_id, currency_code, currency_name]
-
     #dropping the columns that we dont need
     df_dim_currency=df_currency.drop(["Unnamed: 0", "created_at", "last_updated"], axis=1)
 
     #we have to add a new column(currency_name)
     df_dim_currency=df_dim_currency.assign(currency_name=lambda x: x['currency_code'] + '_Name')
-    logger.info("dim_design dataframe has been created")
+    logger.info("dim_currency dataframe has been created")
     
     #upload to s3 as a parquet file
     try:
@@ -100,6 +118,7 @@ def dim_currency(last_checked,ingestion_bucket,processed_bucket):
         logger.info(f"dim_currency parquet has been uploaded to ingestion s3 at: s3://{processed_bucket}/currency/{last_checked}.csv")
     except botocore.exceptions.ClientError as client_error:
         logger.error(f"there has been a error in converting to parquet and uploading for dim_design {str(client_error)}")
+        raise client_error
 
 
 def dim_location(last_checked, ingestion_bucket, processed_bucket):
@@ -156,10 +175,10 @@ def dim_location(last_checked, ingestion_bucket, processed_bucket):
     # error handeling
     except botocore.exceptions.ClientError as client_error:
         logger.error(f"S3 client error at transform dim_location: {str(client_error)}")
-        raise
+        raise client_error
     except Exception as e:
         logger.error(f"Unexpected error in dim_location transform: {str(e)}")
-        raise
+        raise {str(e)}
 
 def dim_design(last_checked, ingestion_bucket, processed_bucket):
     """
@@ -193,8 +212,10 @@ def dim_design(last_checked, ingestion_bucket, processed_bucket):
     try:
         wr.s3.to_parquet(dim_design_df, f"s3://{processed_bucket}/{processed_file_key}")
         logger.info(f"dim_design parquet has been uploaded to ingestion s3 at: s3://{processed_bucket}/{processed_file_key}")
+
     except botocore.exceptions.ClientError as client_error:
         logger.error(f"there has been a error in converting to parquet and uploading for dim_design {str(client_error)}")
+        raise client_error
         
         
 def dim_staff(last_checked, ingestion_bucket, processed_bucket):
@@ -241,94 +262,74 @@ def dim_staff(last_checked, ingestion_bucket, processed_bucket):
         # if dim_staff_df[required_cols].isnull().any().any():
         #     logger.error("Null values found in required dim_staff columns.")
         #     raise ("Null values in NOT NULL fields.")
-        # Upload as parquet
+
+        # Upload dim_staff to S3 processed bucket as parquet file
         output_key = f"dim_staff/{last_checked}.parquet"
         wr.s3.to_parquet(dim_staff_df, f"s3://{processed_bucket}/{output_key}")
         logger.info(f"dim_staff uploaded successfully to s3://{processed_bucket}/{output_key}")
-        return 'dim_staff transformation complete'
+
+        return 'dim_staff transformation completed.'
+
     except botocore.exceptions.ClientError as e:
-        logger.error(f"S3 client error: {e}")
+        logger.error(f"S3 client error: {str(e)}")
         raise e
     except Exception as e:
-        logger.error(f"Unexpected error in dim_staff: {e}")
-        raise e
-
+        logger.error(f"Unexpected error in dim_staff: {str(e)}")
+        raise {str(e)}
+    
 
 def dim_counterparty(last_checked, ingestion_bucket, processed_bucket, s3_client):
     
     key_counterparty = f"counterparty/{last_checked}.csv"
 
-    if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_counterparty):
-        logger.warning(f"Missing file: {key_counterparty}")
-        return 'Missing staff file'
-
-    s3_client = boto3.client('s3')
-    response = s3_client.list_objects_v2(Bucket=ingestion_bucket, Prefix='address/')
-    address_files = response['Contents']        
-    key_address = max(address_files, key=lambda x: x['LastModified'])['Key']
-    
-
-    counterparty_path = f"s3://{ingestion_bucket}/{key_counterparty}"
-    address_path = f"s3://{ingestion_bucket}/{key_address}"
-
-    counterparty_df = wr.s3.read_csv(counterparty_path)
-    address_df = wr.s3.read_csv(address_path)
-    logger.info("Counterparty and address files loaded successfully.")
-    
-    
-    counterparty_df = counterparty_df.rename(columns={"legal_address_id": "address_id"})
-
-    
-    merged_df = pd.merge(counterparty_df, address_df, on='address_id', how="outer")
-    
-    
-    columns=['Unnamed: 0_x', 'Unnamed: 0_y', 'commercial_contact', 'created_at_x',
-              'delivery_contact', 'last_updated_x', 'address_id',
-              'address_id','created_at_y', 'last_updated_y']
-    dim_counterparty_df = merged_df.drop(columns=columns, axis=1)
-    
-    
-    dim_counterparty_df = dim_counterparty_df.rename(columns={
-        'address_line_1' : 'counterparty_legal_address_line_1',
-        'address_line_2' : 'counterparty_legal_address_line_2',
-        'city' : 'counterparty_legal_city',
-        'country' : 'counterparty_legal_country',
-        'district' : 'counterparty_legal_district',
-        'phone' : 'counterparty_legal_phone_number',
-        'postal_code' : 'counterparty_legal_postal_code'
-    })
-    
-    output_key = f"dim_counterparty/{last_checked}.parquet"
-    wr.s3.to_parquet(dim_counterparty_df, f"s3://{processed_bucket}/{output_key}")
-    logger.info(f"dim_counterparty uploaded successfully to s3://{processed_bucket}/{output_key}")
-    return 'dim_counterparty transformation complete'
-
-
-def check_file_exists_in_ingestion_bucket(bucket, filename):
-
-    """
-    Summary:
-    This function accesses the AWS S3 ingestion bucket and check if a specific file exists.
-    If it doesn't exist, it returns 'File' does not exist, and logs the error.
-
-    Args:
-    bucket, file_name
-
-    Returns:
-        Boolean.
-    """
-    s3_client = boto3.client("s3")
     try:
-        s3_client.head_object(Bucket=bucket, Key=filename)
-        logger.info(f"Key: '{filename}' found!")
-        return True
-    except s3_client.exceptions.NoSuchBucket as NoSuchBucket: 
-        logger.info(f"Bucket: '{bucket}' does not exist!")
-        return False
-    except botocore.exceptions.ClientError as ClientError:
-        if ClientError.response["Error"]["Code"] == "404":
-            logger.info(f"Key: '{filename}' does not exist!")
-            return False
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_counterparty):
+            logger.warning(f"Missing file: {key_counterparty}")
+            return 'Missing staff file'
+
+        s3_client = boto3.client('s3')
+        response = s3_client.list_objects_v2(Bucket=ingestion_bucket, Prefix='address/')
+        address_files = response['Contents']        
+        key_address = max(address_files, key=lambda x: x['LastModified'])['Key']
+        
+
+        counterparty_path = f"s3://{ingestion_bucket}/{key_counterparty}"
+        address_path = f"s3://{ingestion_bucket}/{key_address}"
+
+        counterparty_df = wr.s3.read_csv(counterparty_path)
+        address_df = wr.s3.read_csv(address_path)
+        logger.info("Counterparty and address files loaded successfully.")
+        
+        counterparty_df = counterparty_df.rename(columns={"legal_address_id": "address_id"})
+
+        merged_df = pd.merge(counterparty_df, address_df, on='address_id', how="outer")
+        
+        columns=['Unnamed: 0_x', 'Unnamed: 0_y', 'commercial_contact', 'created_at_x',
+                'delivery_contact', 'last_updated_x', 'address_id','created_at_y', 'last_updated_y']
+        
+        dim_counterparty_df = merged_df.drop(columns=columns, axis=1)
+        
+        dim_counterparty_df = dim_counterparty_df.rename(columns={
+            'address_line_1' : 'counterparty_legal_address_line_1',
+            'address_line_2' : 'counterparty_legal_address_line_2',
+            'city' : 'counterparty_legal_city',
+            'country' : 'counterparty_legal_country',
+            'district' : 'counterparty_legal_district',
+            'phone' : 'counterparty_legal_phone_number',
+            'postal_code' : 'counterparty_legal_postal_code'
+        })
+        
+        output_key = f"dim_counterparty/{last_checked}.parquet"
+        wr.s3.to_parquet(dim_counterparty_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"dim_counterparty uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'dim_counterparty transformation complete'
+    
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"S3 client error at transform dim_counterparty: {str(e)}")
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in dim_counterparty transform: {str(e)}")
+        raise {str(e)}
 
 
 def dim_date(last_checked, processed_bucket, start='2020-01-01', end='2030-12-31'):
@@ -355,67 +356,214 @@ def dim_date(last_checked, processed_bucket, start='2020-01-01', end='2030-12-31
         logger.info(f"dim_date parquet has been uploaded to ingestion s3 at: s3://{processed_bucket}/{processed_file_key}")
     except botocore.exceptions.ClientError as client_error:
         logger.error(f"there has been a error in converting to parquet and uploading for dim_date {str(client_error)}")
+        raise client_error
     finally:
         return processed_file_key
 
+def dim_transaction(last_checked, ingestion_bucket, processed_bucket):
+    key_transaction = f"transaction/{last_checked}.csv"
+
+    try:
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_transaction):
+            logger.warning(f"Missing file: {key_transaction}")
+            return 'Missing transaction file'
+
+        file_path_s3 = f's3://{ingestion_bucket}/{key_transaction}'
+        transaction_df = wr.s3.read_csv(file_path_s3)
+        transaction_df = transaction_df.drop(["Unnamed: 0"], axis=1)
+
+        final_columns = ["transaction_id", "transaction_type", "sales_order_id", "purchase_order_id"]
+        dim_transaction_df = transaction_df[final_columns]
+
+        output_key = f"dim_transaction/{last_checked}.parquet"
+        wr.s3.to_parquet(dim_transaction_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"dim_transaction uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'dim_transaction transformation complete'
+
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"Error during dim_transaction transformation: {str(e)}")
+        raise
+
+def dim_payment_type(last_checked, ingestion_bucket, processed_bucket):
+    key_payment_type = f"payment_type/{last_checked}.csv"
+
+    try:
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_payment_type):
+            logger.warning(f"Missing file: {key_payment_type}")
+            return 'Missing payment_type file'
+
+        file_path_s3 = f's3://{ingestion_bucket}/{key_payment_type}'
+        payment_type_df = wr.s3.read_csv(file_path_s3)
+        payment_type_df = payment_type_df.drop(["Unnamed: 0", "created_at", "last_updated"], axis=1)
+
+        output_key = f"dim_payment_type/{last_checked}.parquet"
+        wr.s3.to_parquet(payment_type_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"dim_payment_type uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'dim_payment_type transformation complete'
+
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"Error during dim_payment_type transformation: {str(e)}")
+        raise
 
 
 def fact_sales_order(last_checked,ingestion_bucket,processed_bucket):
        
     key_sales = f"sales_order/{last_checked}.csv"
 
-    if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_sales):
-        logger.warning(f"Missing file: {key_sales}")
-        return 'Missing staff file'
+    try:
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_sales):
+            logger.warning(f"Missing file: {key_sales}")
+            return 'Missing staff file'
+        
+        file_path_s3 = f's3://{ingestion_bucket}/{key_sales}' 
+        fact_sales_df = wr.s3.read_csv(file_path_s3)
+        fact_sales_df = fact_sales_df.drop(["Unnamed: 0"], axis=1)
+        
+        # sales_record_id automaticaly generated by the database as it is PK SERIAL NUMBER, 
+        # This helps to track historical data by having unique sales_record_id to multiple same sales_order_id.
+        # fact_sales_df["sales_record_id"] = fact_sales_df["sales_order_id"]
+
+        #convert created_at to datetime obj, then split into created_date and created_time
+        fact_sales_df["created_at"] = pd.to_datetime(fact_sales_df["created_at"])
+        for d in fact_sales_df["created_at"]:
+            fact_sales_df["created_date"] = d.date()
+            fact_sales_df["created_time"] = d.time()
+        
+        #convert last_updated to datetime obj, then split into last_updated_date and last_updated_time
+        fact_sales_df["last_updated"] = pd.to_datetime(fact_sales_df["last_updated"])
+        for d in fact_sales_df["last_updated"]:
+            fact_sales_df["last_updated_date"] = d.date()
+            fact_sales_df["last_updated_time"] = d.time()
+        
+        fact_sales_df = fact_sales_df.drop(["created_at"], axis=1)
+        fact_sales_df = fact_sales_df.drop(["last_updated"], axis=1)
+
+        #change sales_id to sales_staff_id
+        #fact_sales_df = fact_sales_df.rename({"staff_id": "sales_staff_id"})
+        fact_sales_df["sales_staff_id"] = fact_sales_df["staff_id"]
+        fact_sales_df = fact_sales_df.drop(["staff_id"], axis=1)
+
+        #change delivery date from varchar to datetime 
+        fact_sales_df["agreed_delivery_date"] = pd.to_datetime(fact_sales_df["agreed_delivery_date"]).dt.date
+
+        #change agreed_payment_date from varchar to datetime
+        fact_sales_df["agreed_payment_date"] = pd.to_datetime(fact_sales_df["agreed_payment_date"]).dt.date
+        
+        #change order of columns
+        # do not add sales_record_id as it will be auto generated by PostgreSQL
+        final_columns = [
+            'sales_order_id',
+            'created_date','created_time', 
+            'last_updated_date', 'last_updated_time',
+            'sales_staff_id','counterparty_id',
+            'units_sold', 'unit_price',
+            'currency_id', 'design_id',
+            'agreed_payment_date', 'agreed_delivery_date',
+            'agreed_delivery_location_id']
+        
+        fact_sales_df = fact_sales_df[final_columns]
+
+        logger.info("fact_sales dataframe has been created")
+
+        output_key = f"fact_sales_order/{last_checked}.parquet"
+        wr.s3.to_parquet(fact_sales_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"fact_sales uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'fact_sales transformation complete'
     
-    file_path_s3 = f's3://{ingestion_bucket}/{key_sales}' 
-    fact_sales_df = wr.s3.read_csv(file_path_s3)
-    fact_sales_df = fact_sales_df.drop(["Unnamed: 0"], axis=1)
-    
-    # SERIAL ID needed for sales_record_id?
-    fact_sales_df["sales_record_id"] = fact_sales_df["sales_order_id"]
+    except  botocore.exceptions.ClientError as e:
+        logger.error(f"Error occured during fact_sales_order table transformation: {str(e)}")
+        raise e
 
-    #convert created_at to datetime obj, then split into created_date and created_time
-    fact_sales_df["created_at"] = pd.to_datetime(fact_sales_df["created_at"])
-    for d in fact_sales_df["created_at"]:
-        fact_sales_df["created_date"] = d.date()
-        fact_sales_df["created_time"] = d.time()
-    
-    #convert last_updated to datetime obj, then split into last_updated_date and last_updated_time
-    fact_sales_df["last_updated"] = pd.to_datetime(fact_sales_df["last_updated"])
-    for d in fact_sales_df["last_updated"]:
-        fact_sales_df["last_updated_date"] = d.date()
-        fact_sales_df["last_updated_time"] = d.time()
-    
-    fact_sales_df = fact_sales_df.drop(["created_at"], axis=1)
-    fact_sales_df = fact_sales_df.drop(["last_updated"], axis=1)
+def fact_purchase_order(last_checked, ingestion_bucket, processed_bucket):
+    key_purchase = f"purchase_order/{last_checked}.csv"
 
-      #change sales_id to sales_staff_id
-    #fact_sales_df = fact_sales_df.rename({"staff_id": "sales_staff_id"})
-    fact_sales_df["sales_staff_id"] = fact_sales_df["staff_id"]
-    fact_sales_df = fact_sales_df.drop(["staff_id"], axis=1)
+    try:
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_purchase):
+            logger.warning(f"Missing file: {key_purchase}")
+            return 'Missing purchase file'
 
-    #change delivery date from varchar to datetime 
-    fact_sales_df["agreed_delivery_date"] = pd.to_datetime(fact_sales_df["agreed_delivery_date"]).dt.date
+        file_path_s3 = f's3://{ingestion_bucket}/{key_purchase}'
+        purchase_df = wr.s3.read_csv(file_path_s3)
+        purchase_df = purchase_df.drop(["Unnamed: 0"], axis=1)
 
-    #change agreed_payment_date from varchar to datetime
-    fact_sales_df["agreed_payment_date"] = pd.to_datetime(fact_sales_df["agreed_payment_date"]).dt.date
-    #change order of columns
-    final_columns = [
-        'sales_record_id', 'sales_order_id',
-        'created_date','created_time', 
-        'last_updated_date', 'last_updated_time',
-        'sales_staff_id','counterparty_id',
-        'units_sold', 'unit_price',
-        'currency_id', 'design_id',
-        'agreed_payment_date', 'agreed_delivery_date',
-        'agreed_delivery_location_id']
-    
-    fact_sales_df = fact_sales_df[final_columns]
+        purchase_df["created_at"] = pd.to_datetime(purchase_df["created_at"])
+        purchase_df["created_date"] = purchase_df["created_at"].dt.date
+        purchase_df["created_time"] = purchase_df["created_at"].dt.time
 
-    logger.info("fact_sales dataframe has been created")
+        purchase_df["last_updated"] = pd.to_datetime(purchase_df["last_updated"])
+        purchase_df["last_updated_date"] = purchase_df["last_updated"].dt.date
+        purchase_df["last_updated_time"] = purchase_df["last_updated"].dt.time
 
-    output_key = f"fact_sales_order/{last_checked}.parquet"
-    wr.s3.to_parquet(fact_sales_df, f"s3://{processed_bucket}/{output_key}")
-    logger.info(f"fact_sales uploaded successfully to s3://{processed_bucket}/{output_key}")
-    return 'fact_sales transformation complete'
+        purchase_df["item_unit_price"] = purchase_df["item_unit_price"].astype(float).round(2)
+
+        purchase_df["agreed_delivery_date"] = pd.to_datetime(purchase_df["agreed_delivery_date"]).dt.date
+        purchase_df["agreed_payment_date"] = pd.to_datetime(purchase_df["agreed_payment_date"]).dt.date
+
+        final_columns = [
+            'purchase_order_id', 'created_date', 'created_time',
+            'last_updated_date', 'last_updated_time',
+            'staff_id', 'counterparty_id',
+            'item_code', 'item_quantity', 'item_unit_price',
+            'currency_id', 'agreed_delivery_date',
+            'agreed_payment_date', 'agreed_delivery_location_id'
+        ]
+        fact_purchase_df = purchase_df[final_columns]
+
+        output_key = f"fact_purchase_order/{last_checked}.parquet"
+        wr.s3.to_parquet(fact_purchase_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"fact_purchase_order uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'fact_purchase_order transformation completed.'
+
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"Error during fact_purchase_order transformation: {str(e)}")
+        raise e
+
+def fact_payment(last_checked, ingestion_bucket, processed_bucket):
+    key_payment = f"payment/{last_checked}.csv"
+
+    try:
+        if not check_file_exists_in_ingestion_bucket(bucket=ingestion_bucket, filename=key_payment):
+            logger.warning(f"Missing file: {key_payment}")
+            return 'Missing payment file'
+
+        file_path_s3 = f's3://{ingestion_bucket}/{key_payment}'
+        payment_df = wr.s3.read_csv(file_path_s3)
+        payment_df = payment_df.drop(["Unnamed: 0"], axis=1)
+
+        payment_df["created_at"] = pd.to_datetime(payment_df["created_at"])
+        payment_df["created_date"] = payment_df["created_at"].dt.date
+        payment_df["created_time"] = payment_df["created_at"].dt.time
+
+        payment_df["last_updated"] = pd.to_datetime(payment_df["last_updated"])
+        payment_df["last_updated_date"] = payment_df["last_updated"].dt.date
+        payment_df["last_updated_time"] = payment_df["last_updated"].dt.time
+
+        payment_df["payment_amount"] = payment_df["payment_amount"].astype(float).round(2)
+
+        payment_df["payment_date"] = pd.to_datetime(payment_df["payment_date"]).dt.date
+
+        final_columns = [
+            "payment_id", "created_date", "created_time",
+            "last_updated_date", "last_updated_time",
+            "transaction_id", "counterparty_id",
+            "payment_amount", "currency_id",
+            "payment_type_id", "paid", "payment_date"
+        ]
+        fact_payment_df = payment_df[final_columns]
+
+        output_key = f"fact_payment/{last_checked}.parquet"
+        wr.s3.to_parquet(fact_payment_df, f"s3://{processed_bucket}/{output_key}")
+        logger.info(f"fact_payment uploaded successfully to s3://{processed_bucket}/{output_key}")
+        return 'fact_payment transformation complete'
+
+    except botocore.exceptions.ClientError as e:
+        logger.error(f"Error during fact_payment transformation: {str(e)}")
+        raise
+
+# ----------------------------------------------------------------------------
+# Note: For audit purposes is good practice to track dimension changes in S3 processed bucket.
+# Since each dim_ transform only runs if there was a change in extract table, and every parquet filename is unique due to last_checked.
+# This expectation automatically fulfilled.
+# Also, historical data tracked, since every sales_record_id automaticaly generated by database as it is PK SERIAL NUMBER, 
+# This helps to track historical data by having unique sales_record_id to multiple same sales_order_id.
+# -----------------------------------------------------------------------------

@@ -37,17 +37,17 @@ def sm_client():
         )
     return boto3.client('secretsmanager', config = my_config)
 
-# @pytest.fixture(scope='function')
-# def db_conn():
-#     load_dotenv()
-#     conn = Connection(
-#         user = os.getenv("totesys_user"),
-#         password = os.getenv("totesys_password"),
-#         database = os.getenv("totesys_database"),
-#         host = os.getenv("totesys_host"),
-#         port = os.getenv("totesys_port")
-#     )
-#     return conn
+@pytest.fixture(scope='function')
+def db_conn():
+    load_dotenv()
+    conn = Connection(
+        user = os.getenv("totesys_user"),
+        password = os.getenv("totesys_password"),
+        database = os.getenv("totesys_database"),
+        host = os.getenv("totesys_host"),
+        port = os.getenv("totesys_port")
+    )
+    return conn
 
 @pytest.fixture(scope='function')
 def s3_client():
@@ -170,13 +170,13 @@ class TestGetBucketName:
         del os.environ["S3_INGESTION_BUCKET"] 
 
     def test_get_bucket_name_raises_error_if_bucket_not_found(self):
-        #assign
-        #env variable deleted above       
-        #action
-        result = get_bucket_name()
-        expected = {"ingestion_bucket": 'None'}
-        #assert
-        assert result == expected
+        if "S3_INGESTION_BUCKET" in os.environ:
+            del os.environ["S3_INGESTION_BUCKET"]
+
+        with pytest.raises(EnvironmentError) as exc_info:
+            get_bucket_name()
+        
+        assert "S3_INGESTION_BUCKET env variable is not defined." in str(exc_info.value)
 
     @mock_aws
     def test_env_var_matches_bucket_name(self, s3_client): 
@@ -222,19 +222,27 @@ class TestUpdateLastChecked:
 
         assert datetime.strptime(last_checked,"%Y-%m-%d %H:%M:%S.%f") > datetime.strptime(now,"%Y-%m-%d %H:%M:%S.%f")
 
+    def test_update_last_checked_creates_parameter_if_missing(self, ssm_client):
+        # Ensure 'last_checked' doesn't exist
+        with pytest.raises(ssm_client.exceptions.ParameterNotFound):
+            ssm_client.get_parameter(Name="last_checked")
+
+        last_checked = update_last_checked(ssm_client)
+
+        assert datetime.strptime(last_checked, "%Y-%m-%d %H:%M:%S.%f") <= datetime.now()
+        # Now it should exist
+        param = ssm_client.get_parameter(Name="last_checked")
+        assert "Value" in param["Parameter"]
+
 
 class TestExtractNewRows:
     def test_extract_new_rows_returns_all_data(self, db_conn):   
-        
-        
         column_names, new_rows  = extract_new_rows("address", "1995-01-01 00:00:00.000000", db_conn)
         
         assert len(new_rows) > 0
         assert len(column_names) == len(new_rows[0])
         
     def test_extract_new_rows_returns_no_data(self, db_conn):   
-        
-        
         column_names, new_rows  = extract_new_rows("address", "2030-01-01 00:00:00.000000", db_conn)
         
         assert new_rows == []
@@ -243,10 +251,13 @@ class TestExtractNewRows:
     def test_extract_new_rows_returns_some_but_not_all_data(self, db_conn):
         column_names, new_rows  = extract_new_rows("payment", "2025-06-05 07:55:11.631000", db_conn)
         
-        
         #print(new_rows)
         assert len(new_rows) >= 5
         assert len(column_names) == len(new_rows[0])
+
+    def test_extract_new_rows_raises_error_on_invalid_table(self, db_conn):
+        with pytest.raises(Exception):
+            extract_new_rows("invalid_table", "2020-01-01 00:00:00.000000", db_conn)
 
 @mock_aws  
 class TestConvertNewRowsToDfAndUploadToS3:
@@ -263,7 +274,6 @@ class TestConvertNewRowsToDfAndUploadToS3:
         last_checked="2020-01-01 00:00:00.000000"
 
         convert_new_rows_to_df_and_upload_to_s3_as_csv("testbucket","person",column_names,new_rows,last_checked)
-    
     
         df_read = wr.s3.read_csv(f"s3://testbucket/person/{last_checked}.csv")
         df_read=df_read.drop("Unnamed: 0", axis=1) 
@@ -282,3 +292,22 @@ class TestConvertNewRowsToDfAndUploadToS3:
         last_checked="2020-01-01 00:00:00.000000"
         with pytest.raises(Exception):
             convert_new_rows_to_df_and_upload_to_s3_as_csv("testingbucket","person",column_names,new_rows,last_checked)
+
+    def test_convert_function_handles_empty_data(self, s3_client):
+        s3_client.create_bucket(
+            Bucket='testbucket',
+            CreateBucketConfiguration={
+                'LocationConstraint': 'eu-west-2'
+            }
+        )
+        column_names = ['age', 'height']
+        new_rows = []  # Empty
+        last_checked = "2020-01-01 00:00:00.000000"
+
+        convert_new_rows_to_df_and_upload_to_s3_as_csv("testbucket", "person", column_names, new_rows, last_checked)
+        
+        # Should still create an empty file with headers
+        df_read = wr.s3.read_csv(f"s3://testbucket/person/{last_checked}.csv")
+        df_read = df_read.drop("Unnamed: 0", axis=1) 
+        assert list(df_read.columns.values) == ['age', 'height']
+        assert df_read.empty

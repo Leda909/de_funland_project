@@ -9,7 +9,7 @@ resource "aws_secretsmanager_secret_version" "totesys_db_creds_version" {
   secret_string = jsonencode({
     TOTESYS_USER     = var.TOTESYS_USER
     TOTESYS_PASSWORD = var.TOTESYS_PASSWORD
-    TOTESYS_DATABASE     = var.TOTESYS_DATABASE
+    TOTESYS_DATABASE = var.TOTESYS_DATABASE
     TOTESYS_HOST     = var.TOTESYS_HOST
     TOTESYS_PORT     = var.TOTESYS_PORT
   })
