@@ -11,6 +11,8 @@ import os
 import numpy as np
 from pandas.testing import assert_series_equal
 from decimal import Decimal
+from unittest.mock import patch
+from botocore.exceptions import ClientError
 
 @pytest.fixture(scope='function')
 def s3_client():
@@ -69,10 +71,37 @@ class TestDimCurrency:
         assert list(df_result.values[0]) == list(df_expected.values[0])
         assert list(df_result.columns) == dim_columns
 
-       
+    def test_dim_currency_raises_client_error(self, s3_client):
+        # create mock S3 bucket(s)
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-334-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-334-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+
+        # create an csv file and upload it
+        last_checked = "2000-01-01 00:00:00.000000"
+        df = pd.DataFrame([[0, 'GBP', datetime(2022, 11, 3, 14, 20, 51), datetime(2022, 11, 3, 14, 20, 51)]],
+                          columns=['currency_id', 'currency_code', 'created_at', 'last_updated'])
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-334-33/currency/{last_checked}.csv")
+
+        # make error for the to_parquet function to throw error
+        with patch("src.lambda_handler.transform.wr.s3.to_parquet") as mock_parquet:
+            mock_parquet.side_effect = ClientError(
+                error_response={'Error': {'Code': '500', 'Message': 'Error dim_currency!'}},
+                operation_name='PutObject'
+            )
+
+            # Check it is indeed throw ClientError
+            with pytest.raises(ClientError):
+                dim_currency(last_checked=last_checked, ingestion_bucket="ingestion-bucket-334-33", processed_bucket='processed-bucket-334-33')
+
 @mock_aws    
 class TestDimDesignFunction:
-    def test_new_file_lands_in_processed_bucket(self, s3_client):
+    def test_dim_design_new_file_lands_in_processed_bucket(self, s3_client):
         
         #make mocked bucket, ingestion and processed
         s3_client.create_bucket(
@@ -120,10 +149,36 @@ class TestDimDesignFunction:
         # assert len(df_expected.values[0]) == len(df_result.values[0])
         # assert all([a == b for a, b in zip(df_result.values[0], df_expected.values[0])])
 
-    #def test_logs_error_if_wrong_last_checked_arg_passed(self, s3_client):
-    
-    
-    
+    def test_dim_design_raises_client_error(self, s3_client):
+        # create mock S3 bucket(s)
+        s3_client.create_bucket(
+            Bucket='ingestion-bucket-354-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+        s3_client.create_bucket(
+            Bucket='processed-bucket-354-33',
+            CreateBucketConfiguration={'LocationConstraint': 'eu-west-2'},
+        )
+
+        # create an csv file and upload it
+        last_checked = "2000-01-01 00:00:00.000000"
+
+        df = pd.DataFrame([[0,datetime(2022, 11, 3, 14, 20, 49, 962000), datetime(2022, 11, 3, 14, 20, 49, 962000),'Wooden', '/usr', 'wooden-20220717-npgz.json' ]],
+                          columns=['design_id', 'created_at', 'last_updated', 'design_name', 'file_location', 'file_name'])
+        
+        wr.s3.to_csv(df, f"s3://ingestion-bucket-354-33/design/{last_checked}.csv")
+
+        # make error for the to_parquet function to throw error
+        with patch("src.lambda_handler.transform.wr.s3.to_parquet") as mock_parquet:
+            mock_parquet.side_effect = ClientError(
+                error_response={'Error': {'Code': '500', 'Message': 'Error dim_design!'}},
+                operation_name='PutObject'
+            )
+
+            # Check it is indeed throw ClientError
+            with pytest.raises(ClientError):
+                dim_design(last_checked=last_checked, ingestion_bucket="ingestion-bucket-354-33", processed_bucket='processed-bucket-354-33')
+     
 @mock_aws
 class TestDimStaffFunction:
     def test_dim_staff_function_creates_a_dim_staff_file_in_the_processed_bucket(self, s3_client):
